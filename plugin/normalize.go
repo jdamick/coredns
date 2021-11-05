@@ -9,7 +9,7 @@ import (
 
 	"github.com/coredns/coredns/plugin/pkg/cidr"
 	"github.com/coredns/coredns/plugin/pkg/log"
-	"github.com/coredns/coredns/plugin/pkg/parse"
+	"github.com/coredns/coredns/plugin/pkg/transport"
 
 	"github.com/miekg/dns"
 )
@@ -77,7 +77,7 @@ func (h Host) Normalize() string {
 		"OriginsFromArgsOrServerBlock or NormalizeExact instead.")
 
 	s := string(h)
-	_, s = parse.Transport(s)
+	_, s = transport.ParseTransport(s)
 
 	// The error can be ignored here, because this function is called after the corefile has already been vetted.
 	hosts, _, err := SplitHostPort(s)
@@ -101,7 +101,7 @@ func (h Host) MustNormalize() (string, error) {
 		"OriginsFromArgsOrServerBlock or NormalizeExact instead.")
 
 	s := string(h)
-	_, s = parse.Transport(s)
+	_, s = transport.ParseTransport(s)
 
 	// The error can be ignored here, because this function is called after the corefile has already been vetted.
 	hosts, _, err := SplitHostPort(s)
@@ -117,7 +117,7 @@ func (h Host) MustNormalize() (string, error) {
 func (h Host) NormalizeExact() []string {
 	// The error can be ignored here, because this function should only be called after the corefile has already been vetted.
 	s := string(h)
-	_, s = parse.Transport(s)
+	_, s = transport.ParseTransport(s)
 
 	hosts, _, err := SplitHostPort(s)
 	if err != nil {

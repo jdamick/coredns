@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/coredns/coredns/core/dnsserver"
 	"github.com/coredns/coredns/plugin/pkg/transport"
 
 	"github.com/miekg/dns"
@@ -32,7 +33,7 @@ var (
 // NewHealthChecker returns a new HealthChecker based on transport.
 func NewHealthChecker(trans string, recursionDesired bool) HealthChecker {
 	switch trans {
-	case transport.DNS, transport.TLS:
+	case transport.DNS, dnsserver.TLS:
 		c := new(dns.Client)
 		c.Net = "udp"
 		c.ReadTimeout = hcReadTimeout

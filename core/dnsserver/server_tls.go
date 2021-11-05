@@ -8,7 +8,6 @@ import (
 
 	"github.com/coredns/caddy"
 	"github.com/coredns/coredns/plugin/pkg/reuseport"
-	"github.com/coredns/coredns/plugin/pkg/transport"
 
 	"github.com/miekg/dns"
 )
@@ -63,7 +62,7 @@ func (s *ServerTLS) ServePacket(p net.PacketConn) error { return nil }
 
 // Listen implements caddy.TCPServer interface.
 func (s *ServerTLS) Listen() (net.Listener, error) {
-	l, err := reuseport.Listen("tcp", s.Addr[len(transport.TLS+"://"):])
+	l, err := reuseport.Listen("tcp", s.Addr[len(TLS+"://"):])
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +79,7 @@ func (s *ServerTLS) OnStartupComplete() {
 		return
 	}
 
-	out := startUpZones(transport.TLS+"://", s.Addr, s.zones)
+	out := startUpZones(TLS+"://", s.Addr, s.zones)
 	if out != "" {
 		fmt.Print(out)
 	}
