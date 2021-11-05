@@ -2,6 +2,8 @@ package dnsserver
 
 import (
 	"testing"
+
+	"github.com/coredns/caddy"
 )
 
 func TestHandler(t *testing.T) {
@@ -116,6 +118,57 @@ func TestGroupingServers(t *testing.T) {
 				t.Errorf("Test %d : expected value %v to be in the group, was not", i, v)
 
 			}
+		}
+	}
+}
+
+func TestTransportServers(t *testing.T) {
+	dnsServer := &Server{}
+	create := func(addr string, group []*Config) (caddy.Server, error) {
+		return dnsServer, nil
+	}
+	RegisterTransportServer("test", "8989", create)
+
+	for i, test := range []struct {
+		addr        string
+		grp         []*Config
+		serverNil   bool
+		serverVal   caddy.Server
+		expectedErr error
+	}{
+		// no server will be found, will default to create a new DNS transport
+		{
+			addr:        "test",
+			grp:         []*Config{},
+			serverNil:   false, // default is DNS transport
+			expectedErr: nil,
+		},
+		// registered server will be found
+		{
+			addr:        "test://1.2.3.4",
+			grp:         []*Config{},
+			serverNil:   false,
+			serverVal:   dnsServer,
+			expectedErr: nil,
+		},
+		// no server will be found, will default to create a new DNS transport
+		{
+			addr:        "fake://1.2.3.4",
+			grp:         []*Config{},
+			serverNil:   false, // default is DNS transport
+			expectedErr: nil,
+		},
+	} {
+		s, err := createTransportServer(test.addr, test.grp)
+		if err != test.expectedErr {
+			t.Errorf("Test %d : expected no error for createTransportServer, got %s", i, err)
+		}
+		if s == nil && !test.serverNil {
+			t.Errorf("Test %d : expected Server to not be nil for createTransportServer, was %v", i, s)
+		}
+
+		if s != test.serverVal && test.serverVal != nil {
+			t.Errorf("Test %d : expected Server value %v for createTransportServer, was %v", i, test.serverVal, s)
 		}
 	}
 }

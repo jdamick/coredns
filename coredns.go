@@ -1,5 +1,6 @@
 package main
 
+//go:generate go run servers_generate.go
 //go:generate go run directives_generate.go
 //go:generate go run owners_generate.go
 

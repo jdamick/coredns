@@ -9,7 +9,6 @@ import (
 	"github.com/coredns/caddy"
 	"github.com/coredns/caddy/caddyfile"
 	"github.com/coredns/coredns/plugin"
-	"github.com/coredns/coredns/plugin/pkg/parse"
 	"github.com/coredns/coredns/plugin/pkg/transport"
 
 	"github.com/miekg/dns"
@@ -65,7 +64,7 @@ func (h *dnsContext) InspectServerBlocks(sourceFile string, serverBlocks []caddy
 		// more than one reverse zone, replace the current value and add the rest to s.Keys.
 		zoneAddrs := []zoneAddr{}
 		for ik, k := range s.Keys {
-			trans, k1 := parse.Transport(k) // get rid of any dns:// or other scheme.
+			trans, k1 := transport.ParseTransport(k) // get rid of any dns:// or other scheme.
 			hosts, port, err := plugin.SplitHostPort(k1)
 			// We need to make this a fully qualified domain name to catch all errors here and not later when
 			// plugin.Normalize is called again on these strings, with the prime difference being that the domain
@@ -83,16 +82,7 @@ func (h *dnsContext) InspectServerBlocks(sourceFile string, serverBlocks []caddy
 			}
 
 			if port == "" {
-				switch trans {
-				case transport.DNS:
-					port = Port
-				case transport.TLS:
-					port = transport.TLSPort
-				case transport.GRPC:
-					port = transport.GRPCPort
-				case transport.HTTPS:
-					port = transport.HTTPSPort
-				}
+				port = transport.TransportPort(trans)
 			}
 
 			if len(hosts) > 1 {
@@ -165,37 +155,12 @@ func (h *dnsContext) MakeServers() ([]caddy.Server, error) {
 	// then we create a server for each group
 	var servers []caddy.Server
 	for addr, group := range groups {
-		// switch on addr
-		switch tr, _ := parse.Transport(addr); tr {
-		case transport.DNS:
-			s, err := NewServer(addr, group)
-			if err != nil {
-				return nil, err
-			}
-			servers = append(servers, s)
 
-		case transport.TLS:
-			s, err := NewServerTLS(addr, group)
-			if err != nil {
-				return nil, err
-			}
-			servers = append(servers, s)
-
-		case transport.GRPC:
-			s, err := NewServergRPC(addr, group)
-			if err != nil {
-				return nil, err
-			}
-			servers = append(servers, s)
-
-		case transport.HTTPS:
-			s, err := NewServerHTTPS(addr, group)
-			if err != nil {
-				return nil, err
-			}
-			servers = append(servers, s)
+		s, err := createTransportServer(addr, group)
+		if err != nil {
+			return nil, err
 		}
-
+		servers = append(servers, s)
 	}
 
 	return servers, nil
@@ -286,6 +251,32 @@ func groupConfigsByListenAddr(configs []*Config) (map[string][]*Config, error) {
 	}
 
 	return groups, nil
+}
+
+// TransportServerCreatorFunc defines the function to create a transport server
+type TransportServerCreatorFunc func(addr string, group []*Config) (caddy.Server, error)
+
+type transportServer struct {
+	port    string
+	creator TransportServerCreatorFunc
+}
+
+var (
+	transportServers = make(map[string]transportServer)
+)
+
+// RegisterTransportServer registers your transport server with CoreDNS
+func RegisterTransportServer(scheme, port string, creator TransportServerCreatorFunc) {
+	transport.RegisterTransport(scheme, port)
+	transportServers[scheme] = transportServer{port: port, creator: creator}
+}
+
+func createTransportServer(addr string, group []*Config) (caddy.Server, error) {
+	t, _ := transport.ParseTransport(addr)
+	if c, ok := transportServers[t]; ok {
+		return c.creator(addr, group)
+	}
+	return nil, fmt.Errorf("transport server %s is not registered", addr)
 }
 
 // DefaultPort is the default port.
