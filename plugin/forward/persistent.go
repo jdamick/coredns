@@ -2,7 +2,7 @@ package forward
 
 import (
 	"crypto/tls"
-	"sort"
+	"sync"
 	"time"
 
 	"github.com/miekg/dns"
@@ -16,75 +16,86 @@ type persistConn struct {
 
 // Transport hold the persistent cache.
 type Transport struct {
-	avgDialTime int64                          // kind of average time of dial time
-	conns       [typeTotalCount][]*persistConn // Buckets for udp, tcp and tcp-tls.
-	expire      time.Duration                  // After this duration a connection is expired.
-	addr        string
-	tlsConfig   *tls.Config
+	minDialTimeout time.Duration
+	maxDialTimeout time.Duration
+	avgDialTime    int64                      // kind of average time of dial time
+	conns          [typeTotalCount]*sync.Pool // Buckets for udp, tcp and tcp-tls.
+	connLck        *sync.RWMutex
 
-	dial  chan string
-	yield chan *persistConn
-	ret   chan *persistConn
-	stop  chan bool
+	expire    time.Duration // After this duration a connection is expired.
+	addr      string
+	tlsConfig *tls.Config
+
+	discard *sync.Pool
+	stop    chan bool
 }
 
 func newTransport(addr string) *Transport {
 	t := &Transport{
-		avgDialTime: int64(maxDialTimeout / 2),
-		conns:       [typeTotalCount][]*persistConn{},
-		expire:      defaultExpire,
-		addr:        addr,
-		dial:        make(chan string),
-		yield:       make(chan *persistConn),
-		ret:         make(chan *persistConn),
-		stop:        make(chan bool),
+		minDialTimeout: defaultMinDialTimeout,
+		maxDialTimeout: defaultMaxDialTimeout,
+		avgDialTime:    int64(defaultMaxDialTimeout / 2),
+		conns:          [typeTotalCount]*sync.Pool{},
+		expire:         defaultExpire,
+		addr:           addr,
+		discard:        &sync.Pool{},
+		stop:           make(chan bool),
+		connLck:        &sync.RWMutex{},
+	}
+	for i := transportType(0); i < typeTotalCount; i++ {
+		t.conns[i] = &sync.Pool{}
 	}
 	return t
+}
+
+func poolPersisConn(s *sync.Pool) *persistConn {
+	if pc, ok := s.Get().(*persistConn); ok && pc != nil {
+		return pc
+	}
+	return nil
+}
+
+const TRIES = 2
+
+func (t *Transport) getConn(proto string) *persistConn {
+	transtype := stringToTransportType(proto)
+	t.connLck.RLock()
+	pclist := t.conns[transtype]
+	t.connLck.RUnlock()
+
+	if pclist == nil {
+		return nil
+	}
+	for retry := 0; retry < TRIES; retry++ {
+		if pc := poolPersisConn(pclist); pc != nil {
+			if time.Since(pc.used) < t.expire {
+				return pc
+			} else { // expired, remove it.
+				t.discard.Put(pc)
+			}
+		}
+	}
+	return nil
 }
 
 // connManagers manages the persistent connection cache for UDP and TCP.
 func (t *Transport) connManager() {
 	ticker := time.NewTicker(defaultExpire)
 	defer ticker.Stop()
-Wait:
 	for {
 		select {
-		case proto := <-t.dial:
-			transtype := stringToTransportType(proto)
-			// take the last used conn - complexity O(1)
-			if stack := t.conns[transtype]; len(stack) > 0 {
-				pc := stack[len(stack)-1]
-				if time.Since(pc.used) < t.expire {
-					// Found one, remove from pool and return this conn.
-					t.conns[transtype] = stack[:len(stack)-1]
-					t.ret <- pc
-					continue Wait
-				}
-				// clear entire cache if the last conn is expired
-				t.conns[transtype] = nil
-				// now, the connections being passed to closeConns() are not reachable from
-				// transport methods anymore. So, it's safe to close them in a separate goroutine
-				go closeConns(stack)
-			}
-			t.ret <- nil
-
-		case pc := <-t.yield:
-			transtype := t.transportTypeFromConn(pc)
-			t.conns[transtype] = append(t.conns[transtype], pc)
-
 		case <-ticker.C:
 			t.cleanup(false)
 
 		case <-t.stop:
 			t.cleanup(true)
-			close(t.ret)
 			return
 		}
 	}
 }
 
 // closeConns closes connections.
-func closeConns(conns []*persistConn) {
+func closeConns(conns ...*persistConn) {
 	for _, pc := range conns {
 		pc.c.Close()
 	}
@@ -92,30 +103,19 @@ func closeConns(conns []*persistConn) {
 
 // cleanup removes connections from cache.
 func (t *Transport) cleanup(all bool) {
-	staleTime := time.Now().Add(-t.expire)
-	for transtype, stack := range t.conns {
-		if len(stack) == 0 {
-			continue
+	if all {
+		t.connLck.Lock()
+		defer t.connLck.Unlock()
+		for transtype, stack := range t.conns {
+			t.conns[transtype] = &sync.Pool{}
+			for c := poolPersisConn(stack); c != nil; c = poolPersisConn(stack) {
+				closeConns(c)
+			}
 		}
-		if all {
-			t.conns[transtype] = nil
-			// now, the connections being passed to closeConns() are not reachable from
-			// transport methods anymore. So, it's safe to close them in a separate goroutine
-			go closeConns(stack)
-			continue
+	} else {
+		for conn := t.discard.Get(); conn != nil; conn = t.discard.Get() {
+			closeConns(conn.(*persistConn))
 		}
-		if stack[0].used.After(staleTime) {
-			continue
-		}
-
-		// connections in stack are sorted by "used"
-		good := sort.Search(len(stack), func(i int) bool {
-			return stack[i].used.After(staleTime)
-		})
-		t.conns[transtype] = stack[good:]
-		// now, the connections being passed to closeConns() are not reachable from
-		// transport methods anymore. So, it's safe to close them in a separate goroutine
-		go closeConns(stack[:good])
 	}
 }
 
@@ -126,14 +126,12 @@ const yieldTimeout = 25 * time.Millisecond
 func (t *Transport) Yield(pc *persistConn) {
 	pc.used = time.Now() // update used time
 
-	// Make this non-blocking, because in the case of a very busy forwarder we will *block* on this yield. This
-	// blocks the outer go-routine and stuff will just pile up.  We timeout when the send fails to as returning
-	// these connection is an optimization anyway.
-	select {
-	case t.yield <- pc:
-		return
-	case <-time.After(yieldTimeout):
-		return
+	transtype := t.transportTypeFromConn(pc)
+	t.connLck.RLock()
+	pclist := t.conns[transtype]
+	t.connLck.RUnlock()
+	if pclist != nil {
+		pclist.Put(pc)
 	}
 }
 
@@ -150,13 +148,11 @@ func (t *Transport) SetExpire(expire time.Duration) { t.expire = expire }
 func (t *Transport) SetTLSConfig(cfg *tls.Config) { t.tlsConfig = cfg }
 
 const (
-	defaultExpire  = 10 * time.Second
-	minDialTimeout = 1 * time.Second
-	maxDialTimeout = 30 * time.Second
-)
+	defaultExpire         = 1 * time.Second
+	defaultMinDialTimeout = 1 * time.Second
+	defaultMaxDialTimeout = 30 * time.Second
 
-// Make a var for minimizing this value in tests.
-var (
 	// Some resolves might take quite a while, usually (cached) responses are fast. Set to 2s to give us some time to retry a different upstream.
-	readTimeout = 2 * time.Second
+	defaultReadTimeout  = 2 * time.Second
+	defaultWriteTimeout = 2 * time.Second
 )

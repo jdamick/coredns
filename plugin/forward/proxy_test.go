@@ -2,6 +2,7 @@ package forward
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/coredns/caddy"
@@ -78,22 +79,32 @@ func TestProtocolSelection(t *testing.T) {
 	stateTCP := request.Request{W: &test.ResponseWriter{TCP: true}, Req: new(dns.Msg)}
 	ctx := context.TODO()
 
-	go func() {
-		p.Connect(ctx, stateUDP, options{})
-		p.Connect(ctx, stateUDP, options{forceTCP: true})
-		p.Connect(ctx, stateUDP, options{preferUDP: true})
-		p.Connect(ctx, stateUDP, options{preferUDP: true, forceTCP: true})
-		p.Connect(ctx, stateTCP, options{})
-		p.Connect(ctx, stateTCP, options{forceTCP: true})
-		p.Connect(ctx, stateTCP, options{preferUDP: true})
-		p.Connect(ctx, stateTCP, options{preferUDP: true, forceTCP: true})
-	}()
+	for i, val := range []struct {
+		req           request.Request
+		opts          options
+		expectedProto string
+	}{
+		{req: stateUDP, opts: options{}, expectedProto: "udp"},
+		{req: stateUDP, opts: options{forceTCP: true}, expectedProto: "tcp"},
+		{req: stateUDP, opts: options{preferUDP: true}, expectedProto: "udp"},
+		{req: stateUDP, opts: options{preferUDP: true, forceTCP: true}, expectedProto: "tcp"},
 
-	for i, exp := range []string{"udp", "tcp", "udp", "tcp", "tcp", "tcp", "udp", "tcp"} {
-		proto := <-p.transport.dial
-		p.transport.ret <- nil
-		if proto != exp {
-			t.Errorf("Unexpected protocol in case %d, expected %q, actual %q", i, exp, proto)
+		{req: stateTCP, opts: options{}, expectedProto: "tcp"},
+		{req: stateTCP, opts: options{forceTCP: true}, expectedProto: "tcp"},
+		{req: stateTCP, opts: options{preferUDP: true}, expectedProto: "udp"},
+		{req: stateTCP, opts: options{preferUDP: true, forceTCP: true}, expectedProto: "tcp"},
+	} {
+		_, err := p.Connect(ctx, val.req, val.opts)
+
+		if err == nil {
+			t.Errorf("Unexpected connection to bad_address")
 		}
+		dialProto := strings.Split(err.Error(), ":")[0]
+		proto := strings.ReplaceAll(dialProto, "dial ", "")
+
+		if val.expectedProto != proto {
+			t.Errorf("Unexpected protocol in case %d, expected %q, actual %q", i, val.expectedProto, proto)
+		}
+		p.transport.cleanup(true)
 	}
 }

@@ -12,7 +12,29 @@ import (
 	"github.com/miekg/dns"
 )
 
+func (o options) merge(other options) options {
+	merged := options{o.forceTCP, o.preferUDP, o.hcRecursionDesired, o.hcDomain, o.minDialTimeout, o.maxDialTimeout, o.maxReadTimeout, o.maxWriteTimeout}
+	merged.forceTCP = other.forceTCP
+	merged.preferUDP = other.preferUDP
+	merged.hcRecursionDesired = other.hcRecursionDesired
+	merged.hcDomain = other.hcDomain
+	if other.maxDialTimeout > 0 {
+		merged.maxDialTimeout = other.maxDialTimeout
+	}
+	if other.minDialTimeout > 0 {
+		merged.minDialTimeout = other.minDialTimeout
+	}
+	if other.maxReadTimeout > 0 {
+		merged.maxReadTimeout = other.maxReadTimeout
+	}
+	if other.maxWriteTimeout > 0 {
+		merged.maxWriteTimeout = other.maxWriteTimeout
+	}
+	return merged
+}
+
 func TestSetup(t *testing.T) {
+	f := New()
 	tests := []struct {
 		input           string
 		shouldErr       bool
@@ -23,27 +45,27 @@ func TestSetup(t *testing.T) {
 		expectedErr     string
 	}{
 		// positive
-		{"forward . 127.0.0.1", false, ".", nil, 2, options{hcRecursionDesired: true, hcDomain: "."}, ""},
-		{"forward . 127.0.0.1 {\nhealth_check 0.5s domain example.org\n}\n", false, ".", nil, 2, options{hcRecursionDesired: true, hcDomain: "example.org."}, ""},
-		{"forward . 127.0.0.1 {\nexcept miek.nl\n}\n", false, ".", nil, 2, options{hcRecursionDesired: true, hcDomain: "."}, ""},
-		{"forward . 127.0.0.1 {\nmax_fails 3\n}\n", false, ".", nil, 3, options{hcRecursionDesired: true, hcDomain: "."}, ""},
-		{"forward . 127.0.0.1 {\nforce_tcp\n}\n", false, ".", nil, 2, options{forceTCP: true, hcRecursionDesired: true, hcDomain: "."}, ""},
-		{"forward . 127.0.0.1 {\nprefer_udp\n}\n", false, ".", nil, 2, options{preferUDP: true, hcRecursionDesired: true, hcDomain: "."}, ""},
-		{"forward . 127.0.0.1 {\nforce_tcp\nprefer_udp\n}\n", false, ".", nil, 2, options{preferUDP: true, forceTCP: true, hcRecursionDesired: true, hcDomain: "."}, ""},
-		{"forward . 127.0.0.1:53", false, ".", nil, 2, options{hcRecursionDesired: true, hcDomain: "."}, ""},
-		{"forward . 127.0.0.1:8080", false, ".", nil, 2, options{hcRecursionDesired: true, hcDomain: "."}, ""},
-		{"forward . [::1]:53", false, ".", nil, 2, options{hcRecursionDesired: true, hcDomain: "."}, ""},
-		{"forward . [2003::1]:53", false, ".", nil, 2, options{hcRecursionDesired: true, hcDomain: "."}, ""},
-		{"forward . 127.0.0.1 \n", false, ".", nil, 2, options{hcRecursionDesired: true, hcDomain: "."}, ""},
-		{"forward 10.9.3.0/18 127.0.0.1", false, "0.9.10.in-addr.arpa.", nil, 2, options{hcRecursionDesired: true, hcDomain: "."}, ""},
+		{"forward . 127.0.0.1", false, ".", nil, 2, f.opts.merge(options{hcRecursionDesired: true, hcDomain: "."}), ""},
+		{"forward . 127.0.0.1 {\nhealth_check 0.5s domain example.org\n}\n", false, ".", nil, 2, f.opts.merge(options{hcRecursionDesired: true, hcDomain: "example.org."}), ""},
+		{"forward . 127.0.0.1 {\nexcept miek.nl\n}\n", false, ".", nil, 2, f.opts.merge(options{hcRecursionDesired: true, hcDomain: "."}), ""},
+		{"forward . 127.0.0.1 {\nmax_fails 3\n}\n", false, ".", nil, 3, f.opts.merge(options{hcRecursionDesired: true, hcDomain: "."}), ""},
+		{"forward . 127.0.0.1 {\nforce_tcp\n}\n", false, ".", nil, 2, f.opts.merge(options{forceTCP: true, hcRecursionDesired: true, hcDomain: "."}), ""},
+		{"forward . 127.0.0.1 {\nprefer_udp\n}\n", false, ".", nil, 2, f.opts.merge(options{preferUDP: true, hcRecursionDesired: true, hcDomain: "."}), ""},
+		{"forward . 127.0.0.1 {\nforce_tcp\nprefer_udp\n}\n", false, ".", nil, 2, f.opts.merge(options{preferUDP: true, forceTCP: true, hcRecursionDesired: true, hcDomain: "."}), ""},
+		{"forward . 127.0.0.1:53", false, ".", nil, 2, f.opts.merge(options{hcRecursionDesired: true, hcDomain: "."}), ""},
+		{"forward . 127.0.0.1:8080", false, ".", nil, 2, f.opts.merge(options{hcRecursionDesired: true, hcDomain: "."}), ""},
+		{"forward . [::1]:53", false, ".", nil, 2, f.opts.merge(options{hcRecursionDesired: true, hcDomain: "."}), ""},
+		{"forward . [2003::1]:53", false, ".", nil, 2, f.opts.merge(options{hcRecursionDesired: true, hcDomain: "."}), ""},
+		{"forward . 127.0.0.1 \n", false, ".", nil, 2, f.opts.merge(options{hcRecursionDesired: true, hcDomain: "."}), ""},
+		{"forward 10.9.3.0/18 127.0.0.1", false, "0.9.10.in-addr.arpa.", nil, 2, f.opts.merge(options{hcRecursionDesired: true, hcDomain: "."}), ""},
 		{`forward . ::1
-		forward com ::2`, false, ".", nil, 2, options{hcRecursionDesired: true, hcDomain: "."}, "plugin"},
+		forward com ::2`, false, ".", nil, 2, f.opts.merge(options{hcRecursionDesired: true, hcDomain: "."}), "plugin"},
 		// negative
-		{"forward . a27.0.0.1", true, "", nil, 0, options{hcRecursionDesired: true, hcDomain: "."}, "not an IP"},
-		{"forward . 127.0.0.1 {\nblaatl\n}\n", true, "", nil, 0, options{hcRecursionDesired: true, hcDomain: "."}, "unknown property"},
-		{"forward . 127.0.0.1 {\nhealth_check 0.5s domain\n}\n", true, "", nil, 0, options{hcRecursionDesired: true, hcDomain: "."}, "Wrong argument count or unexpected line ending after 'domain'"},
-		{"forward . https://127.0.0.1 \n", true, ".", nil, 2, options{hcRecursionDesired: true, hcDomain: "."}, "'https' is not supported as a destination protocol in forward: https://127.0.0.1"},
-		{"forward xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 127.0.0.1 \n", true, ".", nil, 2, options{hcRecursionDesired: true, hcDomain: "."}, "unable to normalize 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'"},
+		{"forward . a27.0.0.1", true, "", nil, 0, f.opts.merge(options{hcRecursionDesired: true, hcDomain: "."}), "not an IP"},
+		{"forward . 127.0.0.1 {\nblaatl\n}\n", true, "", nil, 0, f.opts.merge(options{hcRecursionDesired: true, hcDomain: "."}), "unknown property"},
+		{"forward . 127.0.0.1 {\nhealth_check 0.5s domain\n}\n", true, "", nil, 0, f.opts.merge(options{hcRecursionDesired: true, hcDomain: "."}), "Wrong argument count or unexpected line ending after 'domain'"},
+		{"forward . https://127.0.0.1 \n", true, ".", nil, 2, f.opts.merge(options{hcRecursionDesired: true, hcDomain: "."}), "'https' is not supported as a destination protocol in forward: https://127.0.0.1"},
+		{"forward xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 127.0.0.1 \n", true, ".", nil, 2, f.opts.merge(options{hcRecursionDesired: true, hcDomain: "."}), "unable to normalize 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'"},
 	}
 
 	for i, test := range tests {

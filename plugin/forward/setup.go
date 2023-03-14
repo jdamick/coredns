@@ -158,6 +158,11 @@ func parseStanza(c *caddy.Controller) (*Forward, error) {
 			f.proxies[i].health.SetTCPTransport()
 		}
 		f.proxies[i].health.SetDomain(f.opts.hcDomain)
+		if f.opts.maxDialTimeout > 0 {
+			f.proxies[i].transport.minDialTimeout = f.opts.minDialTimeout
+			f.proxies[i].transport.maxDialTimeout = f.opts.maxDialTimeout
+			f.proxies[i].transport.avgDialTime = int64(f.opts.maxDialTimeout.Seconds() / 2)
+		}
 	}
 
 	return f, nil
@@ -279,6 +284,45 @@ func parseBlock(c *caddy.Controller, f *Forward) error {
 		}
 		f.ErrLimitExceeded = errors.New("concurrent queries exceeded maximum " + c.Val())
 		f.maxConcurrent = int64(n)
+
+	case "min_dial_timeout":
+		if !c.NextArg() {
+			return c.ArgErr()
+		}
+		dur, err := time.ParseDuration(c.Val())
+		if err != nil {
+			return err
+		}
+		if dur < 0 {
+			return fmt.Errorf("min_dial_timeout can't be negative: %s", dur)
+		}
+		f.opts.minDialTimeout = dur
+
+	case "max_dial_timeout":
+		if !c.NextArg() {
+			return c.ArgErr()
+		}
+		dur, err := time.ParseDuration(c.Val())
+		if err != nil {
+			return err
+		}
+		if dur < 0 {
+			return fmt.Errorf("max_dial_timeout can't be negative: %s", dur)
+		}
+		f.opts.maxDialTimeout = dur
+
+	case "max_timeout":
+		if !c.NextArg() {
+			return c.ArgErr()
+		}
+		dur, err := time.ParseDuration(c.Val())
+		if err != nil {
+			return err
+		}
+		if dur < 0 {
+			return fmt.Errorf("max_timeout can't be negative: %s", dur)
+		}
+		f.maxTimeout = dur
 
 	default:
 		return c.Errf("unknown property '%s'", c.Val())

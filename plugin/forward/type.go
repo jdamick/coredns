@@ -1,6 +1,8 @@
 package forward
 
-import "net"
+import (
+	"net"
+)
 
 type transportType int
 

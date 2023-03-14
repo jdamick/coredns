@@ -28,8 +28,8 @@ var log = clog.NewWithPlugin("forward")
 // Forward represents a plugin instance that can proxy requests to another (DNS) server. It has a list
 // of proxies each representing one upstream proxy.
 type Forward struct {
-	concurrent int64 // atomic counters need to be first in struct for proper alignment
-
+	concurrent int64         // atomic counters need to be first in struct for proper alignment
+	maxTimeout time.Duration // max timeout of the forwarding proxy for a single request
 	proxies    []*Proxy
 	p          Policy
 	hcInterval time.Duration
@@ -56,7 +56,9 @@ type Forward struct {
 
 // New returns a new Forward.
 func New() *Forward {
-	f := &Forward{maxfails: 2, tlsConfig: new(tls.Config), expire: defaultExpire, p: new(random), from: ".", hcInterval: hcInterval, opts: options{forceTCP: false, preferUDP: false, hcRecursionDesired: true, hcDomain: "."}}
+	f := &Forward{maxTimeout: defaultTimeout, maxfails: 2, tlsConfig: new(tls.Config), expire: defaultExpire, p: new(random), from: ".", hcInterval: hcInterval,
+		opts: options{forceTCP: false, preferUDP: false, hcRecursionDesired: true, hcDomain: ".",
+			maxReadTimeout: defaultReadTimeout, maxDialTimeout: defaultMaxDialTimeout, minDialTimeout: defaultMaxDialTimeout, maxWriteTimeout: defaultWriteTimeout}}
 	return f
 }
 
@@ -102,7 +104,7 @@ func (f *Forward) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg
 	span = ot.SpanFromContext(ctx)
 	i := 0
 	list := f.List()
-	deadline := time.Now().Add(defaultTimeout)
+	deadline := time.Now().Add(f.maxTimeout)
 	start := time.Now()
 	for time.Now().Before(deadline) {
 		if i >= len(list) {
@@ -242,6 +244,11 @@ type options struct {
 	preferUDP          bool
 	hcRecursionDesired bool
 	hcDomain           string
+
+	minDialTimeout  time.Duration
+	maxDialTimeout  time.Duration
+	maxReadTimeout  time.Duration
+	maxWriteTimeout time.Duration
 }
 
 var defaultTimeout = 5 * time.Second

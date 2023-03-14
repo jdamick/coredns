@@ -36,7 +36,7 @@ func averageTimeout(currentAvg *int64, observedDuration time.Duration, weight in
 }
 
 func (t *Transport) dialTimeout() time.Duration {
-	return limitTimeout(&t.avgDialTime, minDialTimeout, maxDialTimeout)
+	return limitTimeout(&t.avgDialTime, t.minDialTimeout, t.maxDialTimeout)
 }
 
 func (t *Transport) updateDialTimeout(newDialTime time.Duration) {
@@ -50,10 +50,7 @@ func (t *Transport) Dial(proto string) (*persistConn, bool, error) {
 		proto = "tcp-tls"
 	}
 
-	t.dial <- proto
-	pc := <-t.ret
-
-	if pc != nil {
+	if pc := t.getConn(proto); pc != nil {
 		ConnCacheHitsCount.WithLabelValues(t.addr, proto).Add(1)
 		return pc, true, nil
 	}
@@ -96,7 +93,7 @@ func (p *Proxy) Connect(ctx context.Context, state request.Request, opts options
 		pc.c.UDPSize = 512
 	}
 
-	pc.c.SetWriteDeadline(time.Now().Add(maxTimeout))
+	pc.c.SetWriteDeadline(time.Now().Add(opts.maxWriteTimeout))
 	// records the origin Id before upstream.
 	originId := state.Req.Id
 	state.Req.Id = dns.Id()
@@ -113,7 +110,7 @@ func (p *Proxy) Connect(ctx context.Context, state request.Request, opts options
 	}
 
 	var ret *dns.Msg
-	pc.c.SetReadDeadline(time.Now().Add(readTimeout))
+	pc.c.SetReadDeadline(time.Now().Add(opts.maxReadTimeout))
 	for {
 		ret, err = pc.c.ReadMsg()
 		if err != nil {
